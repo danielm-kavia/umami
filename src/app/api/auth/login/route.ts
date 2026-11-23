@@ -13,6 +13,8 @@ import { getTwoFactorRequiredReason } from '@/lib/two-factor/policy';
 import { getAllUserTeams, getUserByUsername } from '@/queries/prisma';
 import { loginRequestSchema } from './schema';
 
+// PUBLIC_INTERFACE
+/** Authenticates the login request and returns a session, a 2FA challenge, or an error response. */
 export async function POST(request: Request) {
   const { body, error } = await parseRequest(request, loginRequestSchema, { skipAuth: true });
 
@@ -52,8 +54,11 @@ export async function POST(request: Request) {
     return json({ requiresTwoFactor: true, partialToken });
   }
   // 2FA is required but not set up yet: the session is limited to the setup routes until it is.
-  const twoFactorSetup =
-    !cloudMode && isTwoFactorConfigured() && !!(await getTwoFactorRequiredReason(id));
+  const requiredReason = !cloudMode && (await getTwoFactorRequiredReason(id));
+  if (requiredReason && !isTwoFactorConfigured()) {
+    return serviceUnavailable(getTwoFactorConfigurationError());
+  }
+  const twoFactorSetup = !!requiredReason;
 
   // Bind token to password hash so a password change invalidates old tokens.
   const pwd = hash(user.password);

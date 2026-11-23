@@ -179,16 +179,40 @@ test('POST does not flag users whose password has been changed', async () => {
   });
 });
 
-test('POST does not restrict the session when 2FA cannot be configured', async () => {
-  // Without an encryption key users cannot set up 2FA, so restricting them would lock them out.
+test.each(['global', 'user', 'team'])(
+  'POST rejects login when %s 2FA enrollment is required but encryption is unavailable',
+  async requiredReason => {
+    mocks.findTwoFactorAuth.mockResolvedValue(null);
+    mocks.isTwoFactorConfigured.mockReturnValue(false);
+    mocks.getTwoFactorRequiredReason.mockResolvedValue(requiredReason);
+
+    const response = await POST(new Request('http://localhost/api/auth/login', { method: 'POST' }));
+
+    expect(mocks.getTwoFactorRequiredReason).toHaveBeenCalledWith('user-1');
+    expect(mocks.createSecureToken).not.toHaveBeenCalled();
+    expect(mocks.saveAuth).not.toHaveBeenCalled();
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'two-factor-error-not-configured',
+        message: 'TWO_FACTOR_ENCRYPTION_KEY is missing or invalid',
+        status: 503,
+      },
+    });
+  },
+);
+
+test('POST issues an unrestricted session when 2FA is optional and encryption is unavailable', async () => {
   mocks.findTwoFactorAuth.mockResolvedValue(null);
   mocks.isTwoFactorConfigured.mockReturnValue(false);
-  mocks.getTwoFactorRequiredReason.mockResolvedValue('global');
 
-  await POST(new Request('http://localhost/api/auth/login', { method: 'POST' }));
+  const response = await POST(new Request('http://localhost/api/auth/login', { method: 'POST' }));
 
+  expect(mocks.getTwoFactorRequiredReason).toHaveBeenCalledWith('user-1');
   expect(mocks.createSecureToken).toHaveBeenCalledWith(
     { userId: 'user-1', role: 'admin', pwd: 'pwd-fingerprint' },
     'app-secret',
   );
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({ token: 'full-auth-token' });
 });
